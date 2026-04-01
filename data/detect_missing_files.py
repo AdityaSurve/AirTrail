@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 
-FILENAME_PATTERN = re.compile(r"^(?:HourlyData|HourlyAQObs)_(\d{8})(\d{2})\.dat$", re.IGNORECASE)
+FILENAME_PATTERN = re.compile(r"^HourlyData_(\d{8})(\d{2})\.dat$", re.IGNORECASE)
 
 
 def parse_args() -> argparse.Namespace:

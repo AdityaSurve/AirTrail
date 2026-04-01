@@ -17,11 +17,9 @@ DOWNLOAD_DIR = Path("downloads")
 DOWNLOAD_LOG_CSV = Path("air_quality_data.csv")
 MONTHLY_OUTPUT_DIR = Path("monthly_csv")
 DAT_FILENAME_MONTH = re.compile(
-    r"^(?:HourlyData|HourlyAQObs)_(\d{8})(\d{2})\.dat$", re.IGNORECASE
+    r"^HourlyData_(\d{8})(\d{2})\.dat$", re.IGNORECASE
 )
 
-# Keep this empty to download all available day folders in the year index.
-# Example: {"20260101", "20260102"}
 TARGET_DATES = set()
 
 
@@ -34,7 +32,6 @@ def log_error(msg: str) -> None:
 
 
 def _extract_s3_values(xml_text: str, tag_name: str) -> list[str]:
-    # S3 listing XML uses namespaces; this ignores namespace prefix.
     try:
         root = ET.fromstring(xml_text)
         values = []
@@ -90,9 +87,10 @@ def _list_s3_keys(prefix_root: str) -> list[str]:
     return sorted(set(keys))
 
 
-def get_day_urls() -> list[str]:
-    day_pattern = re.compile(r"^airnow/2026/(\d{8})/$")
-    day_prefixes = _list_s3_prefixes(PREFIX_ROOT)
+def get_day_urls(prefix_root: str | None = None) -> list[str]:
+    root = prefix_root if prefix_root is not None else PREFIX_ROOT
+    day_pattern = re.compile(r"^airnow/\d{4}/(\d{8})/$")
+    day_prefixes = _list_s3_prefixes(root)
     day_urls = []
     for prefix in day_prefixes:
         match = day_pattern.match(prefix)
@@ -110,7 +108,7 @@ def get_day_urls() -> list[str]:
 
 def get_dat_file_urls(day_prefix: str) -> list[str]:
     dat_keys = []
-    dat_name_pattern = re.compile(r"(?:HourlyData)_[^/\s]+\.dat$")
+    dat_name_pattern = re.compile(r"HourlyData_[^/\s]+\.dat$", re.IGNORECASE)
     for key in _list_s3_keys(day_prefix):
         if dat_name_pattern.search(key):
             dat_keys.append(key)
@@ -201,9 +199,6 @@ def _month_key_from_filename(name: str) -> str | None:
 
 
 def build_monthly_csvs_from_dats(download_dir: Path, output_dir: Path) -> None:
-    """
-    One .dat per read; append rows into monthly CSVs only (no combined file).
-    """
     columns = [
         "Date",
         "Hour",
@@ -256,6 +251,59 @@ def build_monthly_csvs_from_dats(download_dir: Path, output_dir: Path) -> None:
         )
     else:
         log_debug("No readable .dat files produced monthly CSV output.")
+
+
+def append_monthly_for_dat_files(dat_files: list[Path], output_dir: Path) -> None:
+    columns = [
+        "Date",
+        "Hour",
+        "Station ID",
+        "Location",
+        "Offset",
+        "Pollutant",
+        "Unit",
+        "Measurement",
+        "Network",
+    ]
+
+    if not dat_files:
+        return
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    months_written: set[str] = set()
+
+    for file in sorted(dat_files):
+        if not file.exists():
+            log_error(f"Missing file for monthly append: {file}")
+            continue
+
+        month_key = _month_key_from_filename(file.name)
+        if not month_key:
+            log_error(f"Could not parse month from filename: {file.name}")
+            continue
+
+        df = _read_dat_file(file, columns)
+        if df is None or df.empty:
+            continue
+
+        df["source_file"] = file.name
+        for col in df.select_dtypes(include="object").columns:
+            df[col] = df[col].astype(str).str.strip()
+            df[col] = df[col].replace({"": pd.NA, "nan": pd.NA, "None": pd.NA})
+        df = df.dropna(how="all")
+
+        year = month_key[:4]
+        month_num = month_key[4:6]
+        month_path = output_dir / \
+            f"all_air_quality_data_{year}_{month_num}.csv"
+        write_header = not month_path.exists() or month_path.stat().st_size == 0
+        df.to_csv(month_path, mode="a", header=write_header, index=False)
+        months_written.add(month_key)
+
+    if months_written:
+        log_debug(
+            f"Monthly CSVs appended for {len(months_written)} month(s) in {output_dir}"
+        )
 
 
 async def main() -> None:
