@@ -2,19 +2,25 @@ from flask import Flask, jsonify, request
 import os
 import boto3
 import uuid
+import hashlib
+import json
+import redis
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from packages.airtrail_core.models import Base, GPSTrace, JobStatus
+from packages.airtrail_core.models import Base, GPSTrace, ProcessingJob, JobStatus, ExposureResult
 from werkzeug.utils import secure_filename
+from services.worker.celery_app import compute_exposure
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://airtrail:password@localhost:5432/airtrail")
 S3_ENDPOINT = os.getenv("S3_ENDPOINT", "http://localhost:9000")
 S3_BUCKET = os.getenv("S3_BUCKET", "airtrail-traces")
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "minioadmin")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "minioadmin")
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 engine = create_engine(DATABASE_URL)
 Session = sessionmaker(bind=engine)
+cache = redis.from_url(REDIS_URL)
 
 s3 = boto3.client(
     "s3",
@@ -47,7 +53,6 @@ def create_app():
         object_name = f"{uuid.uuid4()}_{filename}"
         
         try:
-            # Create bucket if not exists
             try:
                 s3.head_bucket(Bucket=S3_BUCKET)
             except Exception:
@@ -56,18 +61,77 @@ def create_app():
             s3.upload_fileobj(file, S3_BUCKET, object_name)
             storage_uri = f"s3://{S3_BUCKET}/{object_name}"
             
-            # Save to DB
             session = Session()
-            trace = GPSTrace(storage_uri=storage_uri, status=JobStatus.PENDING)
+            trace = GPSTrace(storage_uri=storage_uri)
             session.add(trace)
             session.commit()
+            
+            job = ProcessingJob(trace_id=trace.id, status=JobStatus.PENDING)
+            session.add(job)
+            session.commit()
+            
             trace_id = trace.id
+            job_id = job.id
             session.close()
             
-            return jsonify({"trace_id": trace_id, "message": "uploaded", "storage_uri": storage_uri}), 201
+            # Enqueue to Celery
+            compute_exposure.delay(job_id)
+            
+            return jsonify({"trace_id": trace_id, "job_id": job_id, "message": "uploaded and queued"}), 201
             
         except Exception as e:
             return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/v1/jobs/<int:job_id>", methods=["GET"])
+    def get_job(job_id):
+        session = Session()
+        job = session.query(ProcessingJob).get(job_id)
+        session.close()
+        if not job:
+            return jsonify({"error": "Job not found"}), 404
+        return jsonify({"job_id": job.id, "status": job.status.value, "error": job.error_message})
+        
+    @app.route("/api/v1/traces/<int:trace_id>/exposure", methods=["GET"])
+    def get_trace_exposure(trace_id):
+        cache_key = f"exposure:{trace_id}"
+        cached = cache.get(cache_key)
+        if cached:
+            return jsonify(json.loads(cached))
+            
+        session = Session()
+        res = session.query(ExposureResult).filter_by(trace_id=trace_id).first()
+        session.close()
+        
+        if not res:
+            return jsonify({"error": "Results not ready or trace not found"}), 404
+            
+        data = {
+            "cumulative": res.cumulative_exposure,
+            "mean": res.mean_exposure,
+            "peak": res.peak_exposure
+        }
+        cache.setex(cache_key, 300, json.dumps(data))
+        return jsonify(data)
+
+    @app.route("/api/v1/analytics/location", methods=["POST"])
+    def location_analytics():
+        params = request.json
+        if not params:
+            return jsonify({"error": "No JSON payload"}), 400
+            
+        # create hash for cache
+        param_hash = hashlib.md5(json.dumps(params, sort_keys=True).encode()).hexdigest()
+        cache_key = f"loc_analytics:{param_hash}"
+        
+        cached = cache.get(cache_key)
+        if cached:
+            return jsonify(json.loads(cached))
+        
+        # Stubbing the SQL spatial query for now, since this would do a ST_DWithin query
+        # similar to what's in matching.py
+        data = {"status": "ok", "average": 15.2, "trend": [12, 14, 15, 18, 12]}
+        cache.setex(cache_key, 300, json.dumps(data))
+        return jsonify(data)
 
     return app
 

@@ -28,30 +28,59 @@ celery_app = Celery(
     backend=REDIS_URL,
 )
 
+from packages.airtrail_core.ingestion import parse_csv_trace
+from packages.airtrail_core.matching import match_gps_to_pollution
+from packages.airtrail_core.exposure import compute_metrics
+from packages.airtrail_core.models import ExposureResult, ExposurePoint
+
 @celery_app.task(name="compute_exposure")
-def compute_exposure(trace_id):
+def compute_exposure(job_id):
     session = Session()
-    trace = session.query(GPSTrace).get(trace_id)
-    if not trace:
+    job = session.query(ProcessingJob).get(job_id)
+    if not job:
         session.close()
-        return {"status": "FAILURE", "error": "Trace not found"}
+        return {"status": "FAILURE", "error": "Job not found"}
 
     try:
-        trace.status = JobStatus.RUNNING
+        job.status = JobStatus.RUNNING
         session.commit()
         
-        # Download from S3 (stub)
-        print(f"Downloading {trace.storage_uri} from S3...")
+        trace = session.query(GPSTrace).get(job.trace_id)
         
-        # Spatiotemporal processing logic here (stub)
-        print(f"Processing trace {trace_id}... Done.")
+        # Download from S3
+        import io
+        obj_key = trace.storage_uri.split('s3://' + S3_BUCKET + '/')[-1]
+        response = s3.get_object(Bucket=S3_BUCKET, Key=obj_key)
+        file_bytes = response['Body'].read()
         
-        # Update status
-        trace.status = JobStatus.SUCCESS
+        gps_points = parse_csv_trace(file_bytes)
+        matched_data = match_gps_to_pollution(gps_points, session)
+        
+        for pt in matched_data:
+            ep = ExposurePoint(
+                trace_id=trace.id,
+                timestamp=pt['timestamp'],
+                location=f"SRID=4326;POINT({pt['lon']} {pt['lat']})",
+                matched_site_id=pt.get('matched_site_id'),
+                matched_concentration=pt.get('matched_concentration')
+            )
+            session.add(ep)
+            
+        metrics = compute_metrics(matched_data)
+        res = ExposureResult(
+            trace_id=trace.id,
+            cumulative_exposure=metrics['cumulative'],
+            mean_exposure=metrics['mean'],
+            peak_exposure=metrics['peak']
+        )
+        session.add(res)
+        
+        job.status = JobStatus.SUCCESS
         session.commit()
-        return {"status": "SUCCESS", "trace_id": trace_id}
+        return {"status": "SUCCESS", "job_id": job_id}
     except Exception as e:
-        trace.status = JobStatus.FAILURE
+        job.status = JobStatus.FAILURE
+        job.error_message = str(e)
         session.commit()
         return {"status": "FAILURE", "error": str(e)}
     finally:

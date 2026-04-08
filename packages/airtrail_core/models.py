@@ -16,7 +16,16 @@ class GPSTrace(Base):
     __tablename__ = "gps_traces"
     id = Column(Integer, primary_key=True)
     storage_uri = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class ProcessingJob(Base):
+    __tablename__ = "processing_jobs"
+    id = Column(Integer, primary_key=True)
+    trace_id = Column(Integer, ForeignKey("gps_traces.id"), nullable=False)
     status = Column(Enum(JobStatus), default=JobStatus.PENDING)
+    error_message = Column(String, nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 class MonitoringSite(Base):
@@ -41,4 +50,14 @@ class ExposureResult(Base):
     cumulative_exposure = Column(Float)
     mean_exposure = Column(Float)
     peak_exposure = Column(Float)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class ExposurePoint(Base):
+    __tablename__ = "exposure_points"
+    id = Column(Integer, primary_key=True)
+    trace_id = Column(Integer, ForeignKey("gps_traces.id"), nullable=False)
+    timestamp = Column(DateTime, nullable=False)
+    location = Column(Geometry('POINT', srid=4326))
+    matched_site_id = Column(Integer, ForeignKey("monitoring_sites.id"), nullable=True)
+    matched_concentration = Column(Float, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)

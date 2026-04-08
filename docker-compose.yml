@@ -35,6 +35,52 @@ services:
     volumes:
       - minio_data:/data
 
+  api:
+    build: .
+    command: gunicorn --bind 0.0.0.0:5000 services.api.app:app
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql://airtrail:password@postgres:5432/airtrail
+      - CELERY_BROKER_URL=amqp://guest:guest@rabbitmq:5672//
+      - REDIS_URL=redis://redis:6379/0
+      - S3_ENDPOINT=http://minio:9000
+    ports:
+      - "5000:5000"
+    depends_on:
+      - postgres
+      - rabbitmq
+      - redis
+      - minio
+
+  worker:
+    build: .
+    command: celery -A services.worker.celery_app worker --loglevel=info
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql://airtrail:password@postgres:5432/airtrail
+      - CELERY_BROKER_URL=amqp://guest:guest@rabbitmq:5672//
+      - REDIS_URL=redis://redis:6379/0
+      - S3_ENDPOINT=http://minio:9000
+    depends_on:
+      - postgres
+      - rabbitmq
+      - redis
+      - minio
+
+  dashboard:
+    build: .
+    command: streamlit run services/dashboard/app.py
+    volumes:
+      - .:/app
+    environment:
+      - API_URL=http://api:5000
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+
 volumes:
   postgres_data:
   minio_data:
