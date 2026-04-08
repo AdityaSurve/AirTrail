@@ -1,0 +1,44 @@
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Enum
+from sqlalchemy.orm import declarative_base
+from geoalchemy2 import Geometry
+import datetime
+import enum
+
+Base = declarative_base()
+
+class JobStatus(enum.Enum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    SUCCESS = "SUCCESS"
+    FAILURE = "FAILURE"
+
+class GPSTrace(Base):
+    __tablename__ = "gps_traces"
+    id = Column(Integer, primary_key=True)
+    storage_uri = Column(String, nullable=False)
+    status = Column(Enum(JobStatus), default=JobStatus.PENDING)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+class MonitoringSite(Base):
+    __tablename__ = "monitoring_sites"
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+    location = Column(Geometry('POINT', srid=4326))
+
+class PollutionObservation(Base):
+    __tablename__ = "pollution_observations"
+    id = Column(Integer, primary_key=True)
+    site_id = Column(Integer, ForeignKey("monitoring_sites.id"), nullable=False)
+    timestamp = Column(DateTime, nullable=False)
+    pollutant = Column(String, nullable=False)
+    value = Column(Float, nullable=False)
+    unit = Column(String, default="ug/m3")
+
+class ExposureResult(Base):
+    __tablename__ = "exposure_results"
+    id = Column(Integer, primary_key=True)
+    trace_id = Column(Integer, ForeignKey("gps_traces.id"), nullable=False)
+    cumulative_exposure = Column(Float)
+    mean_exposure = Column(Float)
+    peak_exposure = Column(Float)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)

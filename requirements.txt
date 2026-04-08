@@ -1,0 +1,15 @@
+flask
+gunicorn
+celery
+kombu
+redis
+psycopg2-binary
+geoalchemy2
+sqlalchemy
+alembic
+boto3
+streamlit
+pandas
+pydantic
+pytest
+pytest-cov
