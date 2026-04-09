@@ -1,0 +1,35 @@
+# Virtual env (often hundreds of MB)
+venv/
+.venv/
+env/
+
+# Git
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local secrets
+.env
+.env.*
+
+# Large / local data (not needed in image)
+data/
+
+# Editor / OS
+.cursor/
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+
+# Docs-only (optional; keeps image lean)
+docs/

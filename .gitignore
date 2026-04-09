@@ -3,3 +3,4 @@
 /data/air_quality_data.csv
 */__pycache__/
 .env
+/venv/

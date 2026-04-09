@@ -1,6 +1,12 @@
 import os
 import random
+import sys
 from datetime import datetime, timedelta
+
+_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from packages.airtrail_core.models import Base, MonitoringSite, PollutionObservation
