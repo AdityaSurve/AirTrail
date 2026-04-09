@@ -5,8 +5,9 @@ import uuid
 import hashlib
 import json
 import redis
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
+from datetime import datetime, timezone
 from packages.airtrail_core.models import Base, GPSTrace, ProcessingJob, JobStatus, ExposureResult
 from werkzeug.utils import secure_filename
 from services.worker.celery_app import compute_exposure
@@ -28,6 +29,16 @@ s3 = boto3.client(
     aws_access_key_id=AWS_ACCESS_KEY_ID,
     aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
 )
+
+def _parse_iso_dt(s):
+    if not s:
+        return None
+    s = s.replace("Z", "+00:00")
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
 
 def create_app():
     app = Flask(__name__)
@@ -113,28 +124,146 @@ def create_app():
         cache.setex(cache_key, 300, json.dumps(data))
         return jsonify(data)
 
+    @app.route("/api/v1/traces/<int:trace_id>/exposure/points", methods=["GET"])
+    def get_exposure_points(trace_id):
+        start = _parse_iso_dt(request.args.get("start"))
+        end = _parse_iso_dt(request.args.get("end"))
+        session = Session()
+        try:
+            trace = session.get(GPSTrace, trace_id)
+            if not trace:
+                return jsonify({"error": "Trace not found"}), 404
+            sql = """
+                SELECT ST_Y(e.location::geometry) AS lat,
+                       ST_X(e.location::geometry) AS lon,
+                       e.timestamp,
+                       e.matched_site_id,
+                       e.matched_concentration,
+                       ms.name AS site_name
+                FROM exposure_points e
+                LEFT JOIN monitoring_sites ms ON ms.id = e.matched_site_id
+                WHERE e.trace_id = :tid
+            """
+            params = {"tid": trace_id}
+            if start is not None:
+                sql += " AND e.timestamp >= :start"
+                params["start"] = start
+            if end is not None:
+                sql += " AND e.timestamp <= :end"
+                params["end"] = end
+            sql += " ORDER BY e.timestamp"
+            rows = session.execute(text(sql), params).fetchall()
+            points = []
+            for r in rows:
+                ts = r[2]
+                points.append(
+                    {
+                        "lat": float(r[0]) if r[0] is not None else None,
+                        "lon": float(r[1]) if r[1] is not None else None,
+                        "timestamp": ts.isoformat() if ts else None,
+                        "matched_site_id": r[3],
+                        "matched_concentration": float(r[4]) if r[4] is not None else None,
+                        "site_name": r[5],
+                    }
+                )
+            return jsonify({"points": points})
+        finally:
+            session.close()
+
     @app.route("/api/v1/analytics/location", methods=["POST"])
     def location_analytics():
         params = request.json
         if not params:
             return jsonify({"error": "No JSON payload"}), 400
-            
-        # create hash for cache
-        param_hash = hashlib.md5(json.dumps(params, sort_keys=True).encode()).hexdigest()
+
+        try:
+            lat = float(params["lat"])
+            lon = float(params["lon"])
+        except (KeyError, TypeError, ValueError):
+            return jsonify({"error": "lat and lon are required numbers"}), 400
+
+        start = _parse_iso_dt(params.get("start"))
+        end = _parse_iso_dt(params.get("end"))
+        if start is None or end is None:
+            return jsonify({"error": "start and end ISO datetimes are required"}), 400
+        if start > end:
+            return jsonify({"error": "start must be before end"}), 400
+
+        radius_m = int(params.get("radius_m", 5000))
+        param_hash = hashlib.md5(
+            json.dumps(
+                {"lat": lat, "lon": lon, "start": start.isoformat(), "end": end.isoformat(), "radius_m": radius_m},
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
         cache_key = f"loc_analytics:{param_hash}"
-        
+
         cached = cache.get(cache_key)
         if cached:
             return jsonify(json.loads(cached))
-        
-        # Stubbing the SQL spatial query for now, since this would do a ST_DWithin query
-        # similar to what's in matching.py
-        data = {"status": "ok", "average": 15.2, "trend": [12, 14, 15, 18, 12]}
-        cache.setex(cache_key, 300, json.dumps(data))
-        return jsonify(data)
+
+        session = Session()
+        try:
+            agg = session.execute(
+                text(
+                    """
+                    SELECT AVG(o.value) AS avg_val, COUNT(o.id) AS n
+                    FROM pollution_observations o
+                    JOIN monitoring_sites s ON s.id = o.site_id
+                    WHERE ST_DWithin(
+                        s.location::geography,
+                        ST_SetSRID(ST_Point(:lon, :lat), 4326)::geography,
+                        :radius
+                    )
+                      AND o.timestamp >= :t0 AND o.timestamp <= :t1
+                    """
+                ),
+                {"lat": lat, "lon": lon, "radius": radius_m, "t0": start, "t1": end},
+            ).fetchone()
+
+            series_rows = session.execute(
+                text(
+                    """
+                    SELECT date_trunc('hour', o.timestamp) AS hr, AVG(o.value) AS v
+                    FROM pollution_observations o
+                    JOIN monitoring_sites s ON s.id = o.site_id
+                    WHERE ST_DWithin(
+                        s.location::geography,
+                        ST_SetSRID(ST_Point(:lon, :lat), 4326)::geography,
+                        :radius
+                    )
+                      AND o.timestamp >= :t0 AND o.timestamp <= :t1
+                    GROUP BY 1
+                    ORDER BY 1
+                    """
+                ),
+                {"lat": lat, "lon": lon, "radius": radius_m, "t0": start, "t1": end},
+            ).fetchall()
+
+            avg_val = float(agg[0]) if agg and agg[0] is not None else None
+            n = int(agg[1]) if agg and agg[1] is not None else 0
+            series = [
+                {"t": r[0].isoformat() if r[0] else None, "value": float(r[1]) if r[1] is not None else None}
+                for r in series_rows
+            ]
+
+            data = {
+                "status": "ok",
+                "average": avg_val,
+                "observation_count": n,
+                "radius_m": radius_m,
+                "series": series,
+            }
+            cache.setex(cache_key, 300, json.dumps(data))
+            return jsonify(data)
+        finally:
+            session.close()
 
     return app
 
+
+app = create_app()
+
+
 if __name__ == "__main__":
-    app = create_app()
     app.run(debug=True, port=5000, host="0.0.0.0")

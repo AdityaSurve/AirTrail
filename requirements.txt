@@ -9,6 +9,8 @@ sqlalchemy
 alembic
 boto3
 streamlit
+folium
+streamlit-folium
 pandas
 pydantic
 pytest

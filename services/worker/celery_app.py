@@ -3,9 +3,10 @@ import os
 import boto3
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from packages.airtrail_core.models import GPSTrace, JobStatus
+from packages.airtrail_core.models import GPSTrace, JobStatus, ProcessingJob
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://airtrail:password@localhost:5432/airtrail")
+S3_BUCKET = os.getenv("S3_BUCKET", "airtrail-traces")
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "amqp://guest:guest@localhost:5672//")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 S3_ENDPOINT = os.getenv("S3_ENDPOINT", "http://localhost:9000")
