@@ -214,11 +214,13 @@ const Dashboard = ({ apiBase, hasApi, onBackHome }) => {
 
     const timeline = points.map((point) => ({
       label: formatTime(point.timestamp),
+      ts: point.timestamp,
       value: point.matched_concentration,
     }))
 
     const singleLocationSeries = (singleA?.series || []).map((item) => ({
       label: formatTime(item.t),
+      ts: item.t,
       value: item.value,
     }))
 
