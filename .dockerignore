@@ -24,6 +24,10 @@ htmlcov/
 # Large / local data (not needed in image)
 data/
 
+# React/Vite app — API & worker images are Python-only; node_modules is often 200–400+ MB
+client/node_modules/
+client/dist/
+
 # Editor / OS
 .cursor/
 .idea/

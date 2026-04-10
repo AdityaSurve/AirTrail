@@ -1,0 +1,291 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    @apply bg-slate-950 text-slate-200 antialiased;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  }
+
+  /* Hide scrollbars; wheel / trackpad / touch scrolling still works */
+  * {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  *::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply border border-white/10 bg-white/5 shadow-2xl backdrop-blur-xl;
+  }
+
+  .btn {
+    @apply rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200;
+  }
+
+  .btn-primary {
+    @apply bg-cyan-400 text-slate-900 hover:bg-cyan-300;
+  }
+
+  .btn-ghost {
+    @apply border border-white/20 bg-white/5 text-slate-100 hover:bg-white/10;
+  }
+
+  .eyebrow {
+    @apply text-xs uppercase tracking-[0.18em] text-cyan-200/80;
+  }
+}
+
+.app-shell {
+  position: relative;
+  display: grid;
+  grid-template-columns: 18rem 1fr;
+  gap: 1.25rem;
+  padding: 1.5rem;
+}
+
+.content-shell {
+  position: relative;
+  z-index: 3;
+  min-width: 0;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 1rem;
+  min-width: 0;
+}
+
+/* Recharts: tooltip cursor SVG can extend past the plot; glass/backdrop-blur makes it look like a cyan band on the sidebar */
+.recharts-tooltip-cursor {
+  display: none !important;
+}
+
+.chart-surface {
+  position: relative;
+  isolation: isolate;
+}
+
+.sidebar-panel {
+  isolation: isolate;
+}
+
+.home-shell {
+  position: relative;
+  min-height: 100vh;
+  padding: 2rem;
+}
+
+.home-hero {
+  position: relative;
+  z-index: 3;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 2rem;
+  border-radius: 1.25rem;
+}
+
+.home-hero h1 {
+  font-size: clamp(2rem, 4vw, 3.2rem);
+  line-height: 1.1;
+  color: #f8fafc;
+  margin-top: 0.65rem;
+}
+
+.home-hero p {
+  color: #cbd5e1;
+  margin-top: 1rem;
+}
+
+.hero-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.home-cards {
+  position: relative;
+  z-index: 3;
+  margin: 1rem auto 0;
+  max-width: 860px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.home-section {
+  position: relative;
+  z-index: 3;
+  max-width: 860px;
+  margin: 1.25rem auto 0;
+}
+
+.section-header h2 {
+  margin-top: 0.5rem;
+  color: #f8fafc;
+  font-size: clamp(1.3rem, 2.3vw, 2rem);
+}
+
+.home-band {
+  border-radius: 1.25rem;
+  padding: 1.5rem;
+}
+
+.workflow-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.workflow-card {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(15, 23, 42, 0.55);
+  border-radius: 0.9rem;
+  padding: 0.9rem;
+}
+
+.workflow-card span {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.75rem;
+  color: #67e8f9;
+  border: 1px solid rgba(103, 232, 249, 0.4);
+}
+
+.workflow-card h3 {
+  margin-top: 0.65rem;
+  color: #f1f5f9;
+  font-size: 1rem;
+}
+
+.workflow-card p {
+  margin-top: 0.45rem;
+  color: #cbd5e1;
+  font-size: 0.9rem;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.9rem;
+  margin-top: 1rem;
+}
+
+.detail-card {
+  border-radius: 1rem;
+  padding: 1rem;
+}
+
+.detail-card h3 {
+  color: #f8fafc;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.detail-card p {
+  margin-top: 0.55rem;
+  color: #cbd5e1;
+  font-size: 0.93rem;
+}
+
+.cta-band {
+  border-radius: 1.25rem;
+  padding: 1.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.cta-band h2 {
+  margin-top: 0.45rem;
+  color: #f8fafc;
+  font-size: clamp(1.15rem, 2vw, 1.6rem);
+}
+
+.cta-band p {
+  margin-top: 0.5rem;
+  color: #cbd5e1;
+  max-width: 60ch;
+}
+
+.feature-card {
+  border-radius: 1rem;
+  padding: 1rem;
+}
+
+.feature-card h3 {
+  color: #f1f5f9;
+  font-weight: 600;
+}
+
+.feature-card p {
+  margin-top: 0.5rem;
+  color: #cbd5e1;
+  font-size: 0.95rem;
+}
+
+.glow {
+  position: fixed;
+  border-radius: 9999px;
+  filter: blur(84px);
+  z-index: 0;
+  pointer-events: none;
+}
+
+.glow-a {
+  width: 24rem;
+  height: 24rem;
+  top: -6rem;
+  left: -5rem;
+  background: rgba(34, 211, 238, 0.18);
+}
+
+.glow-b {
+  width: 26rem;
+  height: 26rem;
+  right: -7rem;
+  top: 20%;
+  background: rgba(96, 165, 250, 0.16);
+}
+
+.glow-c {
+  width: 22rem;
+  height: 22rem;
+  bottom: -4rem;
+  left: 36%;
+  background: rgba(244, 114, 182, 0.14);
+}
+
+@media (max-width: 1200px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .home-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-grid,
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cta-band {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

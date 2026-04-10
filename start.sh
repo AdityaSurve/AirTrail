@@ -8,8 +8,9 @@ sleep 5 # Wait for dependent services
 echo "Applying migrations..."
 alembic upgrade head
 
-echo "Seeding database..."
-python packages/airtrail_core/seed.py
+echo "Pollution data: enrich (optional) + ingest monthly CSVs into Postgres when ready:"
+echo "  python data/enrich_monthly_csvs_boulder_coords.py --monthly-dir data/monthly_csv"
+echo "  python data/ingest_monthly_csv_to_postgres.py --monthly-dir data/monthly_csv"
 
 echo "Starting application containers..."
 docker compose up -d api worker dashboard

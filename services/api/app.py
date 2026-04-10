@@ -1,4 +1,5 @@
 from flask import Flask, jsonify, request
+from flask_cors import CORS
 import os
 import boto3
 import uuid
@@ -9,10 +10,16 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timezone
 from packages.airtrail_core.models import Base, GPSTrace, ProcessingJob, JobStatus, ExposureResult
+from packages.airtrail_core.constants import (
+    MONITORED_POLLUTANTS,
+    POLLUTANT_META,
+    parse_pollutant_param,
+    pollutant_sql_in_clause,
+)
 from werkzeug.utils import secure_filename
 from services.worker.celery_app import compute_exposure
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://airtrail:password@localhost:5432/airtrail")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://airtrail:password@localhost:5433/airtrail")
 S3_ENDPOINT = os.getenv("S3_ENDPOINT", "http://localhost:9000")
 S3_BUCKET = os.getenv("S3_BUCKET", "airtrail-traces")
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "minioadmin")
@@ -42,6 +49,43 @@ def _parse_iso_dt(s):
 
 def create_app():
     app = Flask(__name__)
+    CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+    @app.route("/api/v1/meta/pollutants", methods=["GET"])
+    def meta_pollutants():
+        items = []
+        for p in MONITORED_POLLUTANTS:
+            meta = POLLUTANT_META.get(p, {})
+            items.append(
+                {
+                    "id": p,
+                    "unit": meta.get("unit", "µg/m³"),
+                    "who_guideline": meta.get("who_guideline"),
+                    "who_note": meta.get("who_note", ""),
+                }
+            )
+        return jsonify({"pollutants": items})
+
+    @app.route("/api/v1/meta/observations_bounds", methods=["GET"])
+    def meta_observations_bounds():
+        """Min/max timestamp across pollution_observations (UTC naive from DB → ISO Z)."""
+        session = Session()
+        try:
+            row = session.execute(
+                text("SELECT MIN(o.timestamp), MAX(o.timestamp) FROM pollution_observations o")
+            ).fetchone()
+            if not row or row[0] is None or row[1] is None:
+                return jsonify({"start": None, "end": None})
+            t0, t1 = row[0], row[1]
+
+            def _iso_z(dt):
+                if dt.tzinfo is not None:
+                    dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+                return dt.isoformat() + "Z"
+
+            return jsonify({"start": _iso_z(t0), "end": _iso_z(t1)})
+        finally:
+            session.close()
 
     @app.route("/health")
     def health():
@@ -62,7 +106,12 @@ def create_app():
             
         filename = secure_filename(file.filename)
         object_name = f"{uuid.uuid4()}_{filename}"
-        
+
+        raw_poll = request.form.get("pollutant") or request.args.get("pollutant")
+        pollutant, p_err = parse_pollutant_param(raw_poll)
+        if p_err:
+            return jsonify({"error": p_err}), 400
+
         try:
             try:
                 s3.head_bucket(Bucket=S3_BUCKET)
@@ -73,7 +122,7 @@ def create_app():
             storage_uri = f"s3://{S3_BUCKET}/{object_name}"
             
             session = Session()
-            trace = GPSTrace(storage_uri=storage_uri)
+            trace = GPSTrace(storage_uri=storage_uri, pollutant=pollutant)
             session.add(trace)
             session.commit()
             
@@ -88,7 +137,14 @@ def create_app():
             # Enqueue to Celery
             compute_exposure.delay(job_id)
             
-            return jsonify({"trace_id": trace_id, "job_id": job_id, "message": "uploaded and queued"}), 201
+            return jsonify(
+                {
+                    "trace_id": trace_id,
+                    "job_id": job_id,
+                    "pollutant": pollutant,
+                    "message": "uploaded and queued",
+                }
+            ), 201
             
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -104,25 +160,32 @@ def create_app():
         
     @app.route("/api/v1/traces/<int:trace_id>/exposure", methods=["GET"])
     def get_trace_exposure(trace_id):
-        cache_key = f"exposure:{trace_id}"
+        cache_key = f"exposure:v2:{trace_id}"
         cached = cache.get(cache_key)
         if cached:
             return jsonify(json.loads(cached))
             
         session = Session()
-        res = session.query(ExposureResult).filter_by(trace_id=trace_id).first()
-        session.close()
-        
-        if not res:
-            return jsonify({"error": "Results not ready or trace not found"}), 404
-            
-        data = {
-            "cumulative": res.cumulative_exposure,
-            "mean": res.mean_exposure,
-            "peak": res.peak_exposure
-        }
-        cache.setex(cache_key, 300, json.dumps(data))
-        return jsonify(data)
+        try:
+            trace = session.get(GPSTrace, trace_id)
+            res = session.query(ExposureResult).filter_by(trace_id=trace_id).first()
+            if not res or not trace:
+                return jsonify({"error": "Results not ready or trace not found"}), 404
+            p = trace.pollutant or "PM2.5"
+            meta = POLLUTANT_META.get(p, {})
+            data = {
+                "cumulative": res.cumulative_exposure,
+                "mean": res.mean_exposure,
+                "peak": res.peak_exposure,
+                "pollutant": p,
+                "unit": meta.get("unit", "µg/m³"),
+                "who_guideline": meta.get("who_guideline"),
+                "who_note": meta.get("who_note", ""),
+            }
+            cache.setex(cache_key, 300, json.dumps(data))
+            return jsonify(data)
+        finally:
+            session.close()
 
     @app.route("/api/v1/traces/<int:trace_id>/exposure/points", methods=["GET"])
     def get_exposure_points(trace_id):
@@ -166,7 +229,27 @@ def create_app():
                         "site_name": r[5],
                     }
                 )
-            return jsonify({"points": points})
+            bounds = session.execute(
+                text(
+                    "SELECT MIN(e.timestamp), MAX(e.timestamp) FROM exposure_points e WHERE e.trace_id = :tid"
+                ),
+                {"tid": trace_id},
+            ).fetchone()
+            p = trace.pollutant or "PM2.5"
+            meta = POLLUTANT_META.get(p, {})
+            tb = None
+            if bounds and bounds[0] and bounds[1]:
+                tb = {"start": bounds[0].isoformat(), "end": bounds[1].isoformat()}
+            return jsonify(
+                {
+                    "points": points,
+                    "pollutant": p,
+                    "unit": meta.get("unit", "µg/m³"),
+                    "who_guideline": meta.get("who_guideline"),
+                    "who_note": meta.get("who_note", ""),
+                    "time_bounds": tb,
+                }
+            )
         finally:
             session.close()
 
@@ -189,10 +272,22 @@ def create_app():
         if start > end:
             return jsonify({"error": "start must be before end"}), 400
 
+        raw_p = params.get("pollutant")
+        pollutant, p_err = parse_pollutant_param(raw_p if raw_p is not None else "")
+        if p_err:
+            return jsonify({"error": p_err}), 400
+
         radius_m = int(params.get("radius_m", 5000))
         param_hash = hashlib.md5(
             json.dumps(
-                {"lat": lat, "lon": lon, "start": start.isoformat(), "end": end.isoformat(), "radius_m": radius_m},
+                {
+                    "lat": lat,
+                    "lon": lon,
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                    "radius_m": radius_m,
+                    "pollutant": pollutant,
+                },
                 sort_keys=True,
             ).encode()
         ).hexdigest()
@@ -203,10 +298,19 @@ def create_app():
             return jsonify(json.loads(cached))
 
         session = Session()
+        poll_in, poll_bind = pollutant_sql_in_clause(pollutant)
+        loc_params = {
+            "lat": lat,
+            "lon": lon,
+            "radius": radius_m,
+            "t0": start,
+            "t1": end,
+            **poll_bind,
+        }
         try:
             agg = session.execute(
                 text(
-                    """
+                    f"""
                     SELECT AVG(o.value) AS avg_val, COUNT(o.id) AS n
                     FROM pollution_observations o
                     JOIN monitoring_sites s ON s.id = o.site_id
@@ -216,14 +320,15 @@ def create_app():
                         :radius
                     )
                       AND o.timestamp >= :t0 AND o.timestamp <= :t1
+                      AND o.pollutant IN ({poll_in})
                     """
                 ),
-                {"lat": lat, "lon": lon, "radius": radius_m, "t0": start, "t1": end},
+                loc_params,
             ).fetchone()
 
             series_rows = session.execute(
                 text(
-                    """
+                    f"""
                     SELECT date_trunc('hour', o.timestamp) AS hr, AVG(o.value) AS v
                     FROM pollution_observations o
                     JOIN monitoring_sites s ON s.id = o.site_id
@@ -233,11 +338,12 @@ def create_app():
                         :radius
                     )
                       AND o.timestamp >= :t0 AND o.timestamp <= :t1
+                      AND o.pollutant IN ({poll_in})
                     GROUP BY 1
                     ORDER BY 1
                     """
                 ),
-                {"lat": lat, "lon": lon, "radius": radius_m, "t0": start, "t1": end},
+                loc_params,
             ).fetchall()
 
             avg_val = float(agg[0]) if agg and agg[0] is not None else None
@@ -246,12 +352,16 @@ def create_app():
                 {"t": r[0].isoformat() if r[0] else None, "value": float(r[1]) if r[1] is not None else None}
                 for r in series_rows
             ]
-
+            meta = POLLUTANT_META.get(pollutant, {})
             data = {
                 "status": "ok",
                 "average": avg_val,
                 "observation_count": n,
                 "radius_m": radius_m,
+                "pollutant": pollutant,
+                "unit": meta.get("unit", "µg/m³"),
+                "who_guideline": meta.get("who_guideline"),
+                "who_note": meta.get("who_note", ""),
                 "series": series,
             }
             cache.setex(cache_key, 300, json.dumps(data))

@@ -1,0 +1,62 @@
+[
+  {
+    "station_id": "800000001",
+    "location": "CO_STATION_001",
+    "latitude": 40.0511658353763,
+    "longitude": -105.27092169093986
+  },
+  {
+    "station_id": "800000002",
+    "location": "CO_STATION_002",
+    "latitude": 40.05904947867606,
+    "longitude": -105.3244648068696
+  },
+  {
+    "station_id": "800000003",
+    "location": "CO_STATION_003",
+    "latitude": 40.014889330647385,
+    "longitude": -105.33270220932033
+  },
+  {
+    "station_id": "800000004",
+    "location": "CO_STATION_004",
+    "latitude": 39.98595945753554,
+    "longitude": -105.30867645217239
+  },
+  {
+    "station_id": "800000005",
+    "location": "CO_STATION_005",
+    "latitude": 40.02698364277935,
+    "longitude": -105.25513333624264
+  },
+  {
+    "station_id": "800000006",
+    "location": "CO_STATION_006",
+    "latitude": 40.024880438142795,
+    "longitude": -105.28121844400329
+  },
+  {
+    "station_id": "800000007",
+    "location": "CO_STATION_007",
+    "latitude": 39.99542876529728,
+    "longitude": -105.25101463501727
+  },
+  {
+    "station_id": "800000008",
+    "location": "CO_STATION_008",
+    "latitude": 40.04065289235758,
+    "longitude": -105.18786121622836
+  },
+  {
+    "station_id": "800000009",
+    "location": "CO_STATION_009",
+    "latitude": 40.07744109956343,
+    "longitude": -105.22012437582703
+  },
+  {
+    "station_id": "800000010",
+    "location": "CO_STATION_010",
+    "latitude": 39.99174641271472,
+    "longitude": -105.20914117255941
+  }
+]

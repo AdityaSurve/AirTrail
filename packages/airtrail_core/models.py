@@ -16,6 +16,7 @@ class GPSTrace(Base):
     __tablename__ = "gps_traces"
     id = Column(Integer, primary_key=True)
     storage_uri = Column(String, nullable=False)
+    pollutant = Column(String(64), nullable=False, default="PM2.5")
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 class ProcessingJob(Base):
@@ -32,6 +33,8 @@ class MonitoringSite(Base):
     __tablename__ = "monitoring_sites"
     id = Column(Integer, primary_key=True)
     name = Column(String)
+    # AirNow / AQCSV "Station ID" / AQSID (string, zero-padded); NULL if unknown.
+    external_station_id = Column(String(64), nullable=True, unique=True)
     location = Column(Geometry('POINT', srid=4326))
 
 class PollutionObservation(Base):

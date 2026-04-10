@@ -5,7 +5,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from packages.airtrail_core.models import GPSTrace, JobStatus, ProcessingJob
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://airtrail:password@localhost:5432/airtrail")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://airtrail:password@localhost:5433/airtrail")
 S3_BUCKET = os.getenv("S3_BUCKET", "airtrail-traces")
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "amqp://guest:guest@localhost:5672//")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -55,7 +55,8 @@ def compute_exposure(job_id):
         file_bytes = response['Body'].read()
         
         gps_points = parse_csv_trace(file_bytes)
-        matched_data = match_gps_to_pollution(gps_points, session)
+        poll = (trace.pollutant or "PM2.5").strip()
+        matched_data = match_gps_to_pollution(gps_points, session, pollutant=poll)
         
         for pt in matched_data:
             ep = ExposurePoint(

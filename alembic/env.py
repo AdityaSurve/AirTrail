@@ -17,7 +17,7 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
-    url = config.get_main_option("sqlalchemy.url")
+    url = os.environ.get("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -34,8 +34,11 @@ def include_object(object, name, type_, reflected, compare_to):
     return True
 
 def run_migrations_online() -> None:
+    section = config.get_section(config.config_ini_section, {})
+    if os.environ.get("DATABASE_URL"):
+        section = {**section, "sqlalchemy.url": os.environ["DATABASE_URL"]}
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        section,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
