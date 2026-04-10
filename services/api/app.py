@@ -9,13 +9,15 @@ import redis
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timezone
-from packages.airtrail_core.models import Base, GPSTrace, ProcessingJob, JobStatus, ExposureResult
+from packages.airtrail_core.models import Base, GPSTrace, ProcessingJob, JobStatus, ExposureResult, MonitoringSite
 from packages.airtrail_core.constants import (
     MONITORED_POLLUTANTS,
     POLLUTANT_META,
     parse_pollutant_param,
     pollutant_sql_in_clause,
 )
+from packages.airtrail_core.matching import match_gps_to_pollution
+from packages.airtrail_core.exposure import compute_metrics
 from werkzeug.utils import secure_filename
 from services.worker.celery_app import compute_exposure
 
@@ -45,6 +47,39 @@ def _parse_iso_dt(s):
     if dt.tzinfo is not None:
         dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt
+
+
+def _load_gps_points_from_exposure(session, trace_id, start, end):
+    sql = """
+        SELECT ST_Y(e.location::geometry) AS lat,
+               ST_X(e.location::geometry) AS lon,
+               e.timestamp
+        FROM exposure_points e
+        WHERE e.trace_id = :tid
+    """
+    params = {"tid": trace_id}
+    if start is not None:
+        sql += " AND e.timestamp >= :start"
+        params["start"] = start
+    if end is not None:
+        sql += " AND e.timestamp <= :end"
+        params["end"] = end
+    sql += " ORDER BY e.timestamp"
+    rows = session.execute(text(sql), params).fetchall()
+    out = []
+    for r in rows:
+        if r[0] is None or r[1] is None or r[2] is None:
+            continue
+        out.append({"lat": float(r[0]), "lon": float(r[1]), "timestamp": r[2]})
+    return out
+
+
+def _site_names_by_ids(session, site_ids):
+    ids = list({i for i in site_ids if i is not None})
+    if not ids:
+        return {}
+    rows = session.query(MonitoringSite.id, MonitoringSite.name).filter(MonitoringSite.id.in_(ids)).all()
+    return {rid: (name or "") for rid, name in rows}
 
 
 def create_app():
@@ -160,11 +195,45 @@ def create_app():
         
     @app.route("/api/v1/traces/<int:trace_id>/exposure", methods=["GET"])
     def get_trace_exposure(trace_id):
+        raw_dyn = request.args.get("pollutant")
+        if raw_dyn is not None and str(raw_dyn).strip() != "":
+            p, p_err = parse_pollutant_param(raw_dyn)
+            if p_err:
+                return jsonify({"error": p_err}), 400
+            cache_key = f"exposure:v2:{trace_id}:dyn:{p}"
+            cached = cache.get(cache_key)
+            if cached:
+                return jsonify(json.loads(cached))
+            session = Session()
+            try:
+                trace = session.get(GPSTrace, trace_id)
+                if not trace:
+                    return jsonify({"error": "Trace not found"}), 404
+                gps_points = _load_gps_points_from_exposure(session, trace_id, None, None)
+                if not gps_points:
+                    return jsonify({"error": "Results not ready or trace not found"}), 404
+                matched = match_gps_to_pollution(gps_points, session, pollutant=p)
+                metrics = compute_metrics(matched)
+                meta = POLLUTANT_META.get(p, {})
+                data = {
+                    "cumulative": metrics["cumulative"],
+                    "mean": metrics["mean"],
+                    "peak": metrics["peak"],
+                    "pollutant": p,
+                    "unit": meta.get("unit", "µg/m³"),
+                    "who_guideline": meta.get("who_guideline"),
+                    "who_note": meta.get("who_note", ""),
+                }
+                cache.setex(cache_key, 300, json.dumps(data))
+                return jsonify(data)
+            finally:
+                session.close()
+
         cache_key = f"exposure:v2:{trace_id}"
         cached = cache.get(cache_key)
         if cached:
             return jsonify(json.loads(cached))
-            
+
         session = Session()
         try:
             trace = session.get(GPSTrace, trace_id)
@@ -191,11 +260,110 @@ def create_app():
     def get_exposure_points(trace_id):
         start = _parse_iso_dt(request.args.get("start"))
         end = _parse_iso_dt(request.args.get("end"))
+        all_flag = str(request.args.get("all_pollutants", "")).lower() in ("1", "true", "yes")
+        raw_poll = request.args.get("pollutant")
+        override_p = None
+        if not all_flag and raw_poll is not None and str(raw_poll).strip() != "":
+            override_p, p_err = parse_pollutant_param(raw_poll)
+            if p_err:
+                return jsonify({"error": p_err}), 400
+
         session = Session()
         try:
             trace = session.get(GPSTrace, trace_id)
             if not trace:
                 return jsonify({"error": "Trace not found"}), 404
+
+            bounds = session.execute(
+                text(
+                    "SELECT MIN(e.timestamp), MAX(e.timestamp) FROM exposure_points e WHERE e.trace_id = :tid"
+                ),
+                {"tid": trace_id},
+            ).fetchone()
+            tb = None
+            if bounds and bounds[0] and bounds[1]:
+                tb = {"start": bounds[0].isoformat(), "end": bounds[1].isoformat()}
+
+            if all_flag or override_p is not None:
+                gps_points = _load_gps_points_from_exposure(session, trace_id, start, end)
+                if not gps_points:
+                    return jsonify({"error": "No exposure points yet for this trace"}), 404
+
+                if all_flag:
+                    by_poll = {
+                        p: match_gps_to_pollution(gps_points, session, pollutant=p)
+                        for p in MONITORED_POLLUTANTS
+                    }
+                    site_ids = []
+                    for plist in by_poll.values():
+                        for row in plist:
+                            if row.get("matched_site_id"):
+                                site_ids.append(row["matched_site_id"])
+                    names = _site_names_by_ids(session, site_ids)
+                    points = []
+                    n = len(gps_points)
+                    for i in range(n):
+                        conc = {}
+                        sid = None
+                        for p in MONITORED_POLLUTANTS:
+                            m = by_poll[p][i]
+                            v = m.get("matched_concentration")
+                            conc[p] = float(v) if v is not None else None
+                            if sid is None and m.get("matched_site_id"):
+                                sid = m["matched_site_id"]
+                        pt = gps_points[i]
+                        ts = pt["timestamp"]
+                        points.append(
+                            {
+                                "lat": pt["lat"],
+                                "lon": pt["lon"],
+                                "timestamp": ts.isoformat() if ts else None,
+                                "matched_site_id": sid,
+                                "site_name": names.get(sid),
+                                "concentrations": conc,
+                            }
+                        )
+                    units = {p: POLLUTANT_META.get(p, {}).get("unit", "µg/m³") for p in MONITORED_POLLUTANTS}
+                    return jsonify(
+                        {
+                            "points": points,
+                            "pollutants": list(MONITORED_POLLUTANTS),
+                            "units_by_pollutant": units,
+                            "all_pollutants": True,
+                            "time_bounds": tb,
+                        }
+                    )
+
+                matched = match_gps_to_pollution(gps_points, session, pollutant=override_p)
+                site_ids = [m.get("matched_site_id") for m in matched]
+                names = _site_names_by_ids(session, site_ids)
+                points = []
+                for m in matched:
+                    ts = m["timestamp"]
+                    sid = m.get("matched_site_id")
+                    mc = m.get("matched_concentration")
+                    points.append(
+                        {
+                            "lat": float(m["lat"]),
+                            "lon": float(m["lon"]),
+                            "timestamp": ts.isoformat() if ts else None,
+                            "matched_site_id": sid,
+                            "matched_concentration": float(mc) if mc is not None else None,
+                            "site_name": names.get(sid),
+                        }
+                    )
+                meta = POLLUTANT_META.get(override_p, {})
+                return jsonify(
+                    {
+                        "points": points,
+                        "pollutant": override_p,
+                        "unit": meta.get("unit", "µg/m³"),
+                        "who_guideline": meta.get("who_guideline"),
+                        "who_note": meta.get("who_note", ""),
+                        "time_bounds": tb,
+                    }
+                )
+
             sql = """
                 SELECT ST_Y(e.location::geometry) AS lat,
                        ST_X(e.location::geometry) AS lon,
@@ -229,17 +397,8 @@ def create_app():
                         "site_name": r[5],
                     }
                 )
-            bounds = session.execute(
-                text(
-                    "SELECT MIN(e.timestamp), MAX(e.timestamp) FROM exposure_points e WHERE e.trace_id = :tid"
-                ),
-                {"tid": trace_id},
-            ).fetchone()
             p = trace.pollutant or "PM2.5"
             meta = POLLUTANT_META.get(p, {})
-            tb = None
-            if bounds and bounds[0] and bounds[1]:
-                tb = {"start": bounds[0].isoformat(), "end": bounds[1].isoformat()}
             return jsonify(
                 {
                     "points": points,

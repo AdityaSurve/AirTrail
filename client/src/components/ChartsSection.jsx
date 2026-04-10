@@ -64,7 +64,7 @@ const ChartsSection = ({
 
       <div className="flex w-full flex-col items-stretch justify-center gap-4 lg:flex-row">
         <div className="flex w-full min-w-0 flex-col gap-4 lg:max-w-[min(100%,520px)]">
-          <TopBoxes processed={processed} mode={mode} />
+          <TopBoxes processed={processed} mode={mode} hasUploadedCsv={hasUploadedCsv} />
           <TimeSpentInPollutionBinsPieChart
             bins={processed.bins}
             mode={mode}
@@ -75,9 +75,10 @@ const ChartsSection = ({
         <Map
           mode={mode}
           points={processed.points}
-          topLocations={processed.topLocations}
+          traceSites={processed.traceSites}
           singleQuery={processed.singleQuery}
           unitLabel={processed.unitLabel}
+          activePollutant={processed.activePollutant}
         />
       </div>
       <PollutionExposureOverTime

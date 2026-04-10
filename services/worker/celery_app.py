@@ -81,9 +81,12 @@ def compute_exposure(job_id):
         session.commit()
         return {"status": "SUCCESS", "job_id": job_id}
     except Exception as e:
-        job.status = JobStatus.FAILURE
-        job.error_message = str(e)
-        session.commit()
+        session.rollback()
+        job = session.query(ProcessingJob).get(job_id)
+        if job:
+            job.status = JobStatus.FAILURE
+            job.error_message = str(e)
+            session.commit()
         return {"status": "FAILURE", "error": str(e)}
     finally:
         session.close()

@@ -33,7 +33,7 @@ export async function fetchObservationsBounds(apiBase) {
 export async function uploadTrace(apiBase, file, pollutant) {
   const fd = new FormData()
   fd.append('file', file)
-  fd.append('pollutant', pollutant)
+  if (pollutant) fd.append('pollutant', pollutant)
   const res = await fetch(join(apiBase, '/api/v1/traces'), {
     method: 'POST',
     body: fd,
@@ -46,15 +46,21 @@ export async function fetchJob(apiBase, jobId) {
   return parseJsonResponse(res)
 }
 
-export async function fetchTraceExposure(apiBase, traceId) {
-  const res = await fetch(join(apiBase, `/api/v1/traces/${traceId}/exposure`))
+export async function fetchTraceExposure(apiBase, traceId, { pollutant } = {}) {
+  const q = new URLSearchParams()
+  if (pollutant) q.set('pollutant', pollutant)
+  const qs = q.toString()
+  const path = `/api/v1/traces/${traceId}/exposure${qs ? `?${qs}` : ''}`
+  const res = await fetch(join(apiBase, path))
   return parseJsonResponse(res)
 }
 
-export async function fetchExposurePoints(apiBase, traceId, { start, end } = {}) {
+export async function fetchExposurePoints(apiBase, traceId, { start, end, pollutant, allPollutants } = {}) {
   const q = new URLSearchParams()
   if (start) q.set('start', start)
   if (end) q.set('end', end)
+  if (pollutant) q.set('pollutant', pollutant)
+  if (allPollutants) q.set('all_pollutants', 'true')
   const qs = q.toString()
   const path = `/api/v1/traces/${traceId}/exposure/points${qs ? `?${qs}` : ''}`
   const res = await fetch(join(apiBase, path))

@@ -27,7 +27,7 @@ def match_gps_to_pollution(gps_points, session, pollutant="PM2.5"):
         LEFT JOIN pollution_observations o ON s.id = o.site_id AND o.pollutant IN ({poll_in})
         WHERE ST_DWithin(s.location::geography, ST_SetSRID(ST_Point(:lon, :lat), 4326)::geography, 5000)
           AND o.timestamp >= :ts_start AND o.timestamp <= :ts_end
-        ORDER BY dist ASC, abs(EXTRACT(EPOCH FROM o.timestamp) - EXTRACT(EPOCH FROM :ts::timestamp)) ASC
+        ORDER BY dist ASC, abs(EXTRACT(EPOCH FROM o.timestamp) - EXTRACT(EPOCH FROM CAST(:ts AS timestamp))) ASC
         LIMIT 1
     """)
     

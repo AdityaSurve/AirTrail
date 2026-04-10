@@ -24,6 +24,40 @@ const toLocalInput = (iso) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
+/** Great-circle distance between two WGS84 points (km). */
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371
+  const toRad = (d) => (d * Math.PI) / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLon = toRad(lon2 - lon1)
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return R * c
+}
+
+function tracePathLengthKm(points) {
+  if (!points?.length || points.length < 2) return null
+  let km = 0
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1]
+    const b = points[i]
+    if (
+      a?.lat == null ||
+      a?.lon == null ||
+      b?.lat == null ||
+      b?.lon == null ||
+      Number.isNaN(a.lat) ||
+      Number.isNaN(b.lat)
+    ) {
+      continue
+    }
+    km += haversineKm(a.lat, a.lon, b.lat, b.lon)
+  }
+  return km > 0 ? km : null
+}
+
 const Dashboard = ({ apiBase, hasApi, onBackHome }) => {
   const [emptyBase] = useState(() => createEmptyDashboardModel())
   const [isUploadOpen, setIsUploadOpen] = useState(false)
@@ -50,6 +84,7 @@ const Dashboard = ({ apiBase, hasApi, onBackHome }) => {
   const [singleEnd, setSingleEnd] = useState(toLocalInput(dq.end))
 
   const didSyncRangeFromDb = useRef(false)
+  const traceJustUploadedRef = useRef(false)
   const [ingestedTimeBounds, setIngestedTimeBounds] = useState(null)
 
   useEffect(() => {
@@ -92,7 +127,7 @@ const Dashboard = ({ apiBase, hasApi, onBackHome }) => {
         trace_id: traceId,
         job_id: jobId,
         message: 'uploaded and queued',
-        pollutant: exposure.pollutant || liveTrace.pollutant,
+        pollutant: liveTrace.uploadedPollutant ?? exposure.pollutant ?? liveTrace.pollutant,
       }
       m.upload_trace_tab.job_status_samples = [{ job_id: jobId, status: jobStatus, error: null }]
       m.upload_trace_tab.exposure_summary = {
@@ -119,14 +154,7 @@ const Dashboard = ({ apiBase, hasApi, onBackHome }) => {
     return m
   }, [emptyBase, liveTrace, singleLive, jobStatus])
 
-  const tracePollutant =
-    liveTrace?.exposure?.pollutant ||
-    dataModel.upload_trace_tab.upload_response.pollutant ||
-    dataModel.upload_trace_tab.exposure_summary?.pollutant ||
-    DEFAULT_POLLUTANT
-
-  const activePollutant =
-    activeMode === 'trace' && hasUploadedCsv ? tracePollutant : selectedPollutant
+  const activePollutant = selectedPollutant
 
   const pointsFull = dataModel.upload_trace_tab.time_filtered_points_response.points || []
   const bounds = dataModel.upload_trace_tab.file_time_bounds
@@ -171,14 +199,18 @@ const Dashboard = ({ apiBase, hasApi, onBackHome }) => {
       }
     })
 
-    const topLocations = Object.values(locationStats)
+    const traceSites = Object.values(locationStats)
       .filter((e) => e.count > 0)
       .map((entry) => ({
-        ...entry,
+        site: entry.site,
+        lat: entry.lat,
+        lon: entry.lon,
         avgExposure: entry.exposure / entry.count,
       }))
-      .sort((x, y) => y.avgExposure - x.avgExposure)
-      .slice(0, 3)
+      .sort((a, b) => a.site.localeCompare(b.site))
+
+    const tracePathKm = tracePathLengthKm(points)
+    const traceDistinctSitesCount = traceSites.length
 
     const timeline = points.map((point) => ({
       label: formatTime(point.timestamp),
@@ -210,7 +242,9 @@ const Dashboard = ({ apiBase, hasApi, onBackHome }) => {
       bins,
       binLabels: WHO_BIN_CONFIG[activePollutant] || WHO_BIN_CONFIG['PM2.5'],
       timeline,
-      topLocations,
+      traceSites,
+      tracePathKm,
+      traceDistinctSitesCount,
       singleLocationSeries,
       summary,
       singleQuery,
@@ -221,7 +255,6 @@ const Dashboard = ({ apiBase, hasApi, onBackHome }) => {
       locationAnalytics: singleA,
       whoGuideline: whoG,
       activePollutant,
-      tracePollutant,
     }
   }, [dataModel, filteredPoints, activePollutant, activeMode, selectedPollutant])
 
@@ -231,6 +264,34 @@ const Dashboard = ({ apiBase, hasApi, onBackHome }) => {
       setTraceTimeRange([new Date(start), new Date(end)])
     }
   }, [liveTrace])
+
+  useEffect(() => {
+    if (!hasApi || activeMode !== 'trace' || !liveTrace?.traceId) return undefined
+    if (traceJustUploadedRef.current) {
+      traceJustUploadedRef.current = false
+      return undefined
+    }
+    const tid = liveTrace.traceId
+    let cancelled = false
+    ;(async () => {
+      try {
+        const [exposure, pointsPayload] = await Promise.all([
+          api.fetchTraceExposure(apiBase, tid, { pollutant: selectedPollutant }),
+          api.fetchExposurePoints(apiBase, tid, { pollutant: selectedPollutant }),
+        ])
+        if (!cancelled) {
+          setLiveTrace((prev) =>
+            prev && prev.traceId === tid ? { ...prev, exposure, pointsPayload } : prev,
+          )
+        }
+      } catch (e) {
+        if (!cancelled) setUploadError(e?.message || String(e))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [hasApi, activeMode, apiBase, liveTrace?.traceId, selectedPollutant])
 
   useEffect(() => {
     if (!hasApi || activeMode !== 'single') {
@@ -269,13 +330,13 @@ const Dashboard = ({ apiBase, hasApi, onBackHome }) => {
     }
   }, [hasApi, activeMode, apiBase, singleLat, singleLon, singleStart, singleEnd, singleRadius, selectedPollutant])
 
-  const handleLiveUpload = async (file, pollutant) => {
+  const handleLiveUpload = async (file) => {
     if (!hasApi) return
     setUploadError(null)
     setUploadBusy(true)
     setJobStatus('PENDING')
     try {
-      const up = await api.uploadTrace(apiBase, file, pollutant)
+      const up = await api.uploadTrace(apiBase, file, selectedPollutant)
       const { trace_id, job_id } = up
       let terminal = false
       for (let i = 0; i < 90; i++) {
@@ -292,12 +353,14 @@ const Dashboard = ({ apiBase, hasApi, onBackHome }) => {
       }
       if (!terminal) throw new Error('Processing timed out — try again or check worker logs')
 
+      traceJustUploadedRef.current = true
       const exposure = await api.fetchTraceExposure(apiBase, trace_id)
       const pointsPayload = await api.fetchExposurePoints(apiBase, trace_id)
       setLiveTrace({
         traceId: trace_id,
         jobId: job_id,
-        pollutant: exposure.pollutant || pollutant,
+        uploadedPollutant: up.pollutant,
+        pollutant: exposure.pollutant || selectedPollutant,
         exposure,
         pointsPayload,
       })
@@ -316,7 +379,40 @@ const Dashboard = ({ apiBase, hasApi, onBackHome }) => {
 
   const currentMode = hasUploadedCsv ? activeMode : 'single'
 
-  const downloadCsv = () => {
+  const downloadCsv = async () => {
+    const esc = (item) => `"${String(item).replaceAll('"', '""')}"`
+
+    if (hasApi && hasUploadedCsv && liveTrace?.traceId) {
+      try {
+        const start = traceTimeRange?.[0]?.toISOString()
+        const end = traceTimeRange?.[1]?.toISOString()
+        const payload = await api.fetchExposurePoints(apiBase, liveTrace.traceId, {
+          allPollutants: true,
+          start,
+          end,
+        })
+        const pols = payload.pollutants || POLLUTANT_IDS
+        const headers = ['timestamp', 'lat', 'lon', 'site_name', ...pols.map((p) => `conc_${p}`)]
+        const rows = (payload.points || []).map((point) => {
+          const conc = point.concentrations || {}
+          return [point.timestamp, point.lat, point.lon, point.site_name, ...pols.map((p) => conc[p])]
+        })
+        const csv = [headers, ...rows].map((row) => row.map(esc).join(',')).join('\n')
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = 'airtrail_results.csv'
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        URL.revokeObjectURL(url)
+      } catch (e) {
+        setUploadError(e?.message || String(e))
+      }
+      return
+    }
+
     const headers = ['timestamp', 'lat', 'lon', 'site_name', 'pollutant', 'concentration']
     const rows = processed.points.map((point) => [
       point.timestamp,
@@ -326,9 +422,7 @@ const Dashboard = ({ apiBase, hasApi, onBackHome }) => {
       processed.activePollutant,
       point.matched_concentration,
     ])
-    const csv = [headers, ...rows]
-      .map((row) => row.map((item) => `"${String(item).replaceAll('"', '""')}"`).join(','))
-      .join('\n')
+    const csv = [headers, ...rows].map((row) => row.map(esc).join(',')).join('\n')
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
@@ -390,8 +484,6 @@ const Dashboard = ({ apiBase, hasApi, onBackHome }) => {
           pollutants={POLLUTANT_IDS}
           selectedPollutant={selectedPollutant}
           onPollutantChange={setSelectedPollutant}
-          tracePollutant={tracePollutant}
-          pollutantLocked={currentMode === 'trace' && hasUploadedCsv}
         />
 
         {uploadError ? (

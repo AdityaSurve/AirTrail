@@ -6,8 +6,6 @@ const Navbar = ({
   pollutants,
   selectedPollutant,
   onPollutantChange,
-  tracePollutant,
-  pollutantLocked,
   onUploadClick,
 }) => {
   return (
@@ -23,13 +21,12 @@ const Navbar = ({
         <label className="flex items-center gap-2 text-slate-300">
           <span className="text-xs uppercase tracking-wide text-slate-400">Pollutant</span>
           <select
-            className="rounded-lg border border-white/20 bg-slate-900/70 px-3 py-1.5 text-slate-100 disabled:opacity-60"
-            value={pollutantLocked ? tracePollutant : selectedPollutant}
+            className="rounded-lg border border-white/20 bg-slate-900/70 px-3 py-1.5 text-slate-100"
+            value={selectedPollutant}
             onChange={(e) => onPollutantChange(e.target.value)}
-            disabled={pollutantLocked}
             title={
-              pollutantLocked
-                ? 'Pollutant is fixed for this upload. Re-upload to change.'
+              currentMode === 'trace' && hasUploadedCsv
+                ? 'Re-match this trace to the selected pollutant (no re-upload)'
                 : 'WHO-based binning updates when you change pollutant'
             }
           >

@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { DEFAULT_POLLUTANT, POLLUTANT_IDS } from '../constants/pollutants'
 
 const FileUploadModal = ({
   isOpen,
@@ -12,14 +11,13 @@ const FileUploadModal = ({
 }) => {
   const [fileName, setFileName] = useState('')
   const [file, setFile] = useState(null)
-  const [pollutant, setPollutant] = useState(DEFAULT_POLLUTANT)
 
   if (!isOpen) return null
 
   const submitLive = async () => {
     if (!file) return
     try {
-      await onLiveUpload(file, pollutant)
+      await onLiveUpload(file)
       setFile(null)
       setFileName('')
       onClose()
@@ -34,24 +32,9 @@ const FileUploadModal = ({
         <h3 className="text-xl font-semibold text-slate-100">Upload Trace CSV</h3>
         <p className="mt-2 text-sm text-slate-300">
           CSV must include <code className="text-cyan-300">timestamp</code>,{' '}
-          <code className="text-cyan-300">lat</code>, <code className="text-cyan-300">lon</code>. Choose which
-          pollutant to match against monitoring observations.
+          <code className="text-cyan-300">lat</code>, <code className="text-cyan-300">lon</code>. Processing uses the
+          currently selected pollutant from the top navbar.
         </p>
-
-        <label className="mt-4 block text-sm text-slate-200">
-          Pollutant
-          <select
-            className="mt-2 w-full rounded-lg border border-white/20 bg-slate-900/50 p-2 text-slate-100"
-            value={pollutant}
-            onChange={(e) => setPollutant(e.target.value)}
-          >
-            {POLLUTANT_IDS.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-        </label>
 
         <label className="mt-4 block text-sm text-slate-200">
           CSV file
