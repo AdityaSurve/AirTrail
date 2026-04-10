@@ -50,28 +50,40 @@ function DonutCenterReadout({ hoveredIndex, total, data, colors }) {
   )
 }
 
-function InteractiveLegend({ payload, colors, onEnter, onLeaveSchedule }) {
+/** Recharts sorts legend `payload` (e.g. by name), so list index ≠ pie `data` index. */
+function legendItemToDataIndex(item, data) {
+  const name = item?.value ?? item?.payload?.name
+  if (name == null) return -1
+  const i = data.findIndex((d) => d.name === name)
+  return i
+}
+
+function InteractiveLegend({ payload, data, colors, onEnter, onLeaveSchedule }) {
   if (!payload?.length) return null
   return (
     <ul className="flex flex-wrap justify-center gap-x-4 gap-y-2 px-2 pt-2 pb-1">
-      {payload.map((item, index) => (
-        <li key={item.value}>
-          <button
-            type="button"
-            className="flex cursor-default items-center gap-2 rounded-lg border border-transparent px-2.5 py-1.5 text-left text-[11px] text-slate-300 transition-colors hover:border-white/15 hover:bg-white/5 focus-visible:border-cyan-400/40 focus-visible:outline-none"
-            onMouseEnter={() => onEnter(index)}
-            onMouseLeave={onLeaveSchedule}
-            onFocus={() => onEnter(index)}
-            onBlur={onLeaveSchedule}
-          >
-            <span
-              className="h-2.5 w-2.5 shrink-0 rounded-sm ring-1 ring-white/20"
-              style={{ backgroundColor: item.color ?? colors[index % colors.length] }}
-            />
-            <span className="font-medium tracking-wide">{item.value}</span>
-          </button>
-        </li>
-      ))}
+      {payload.map((item) => {
+        const dataIndex = legendItemToDataIndex(item, data)
+        const safeIndex = dataIndex >= 0 ? dataIndex : 0
+        return (
+          <li key={item.value}>
+            <button
+              type="button"
+              className="flex cursor-default items-center gap-2 rounded-lg border border-transparent px-2.5 py-1.5 text-left text-[11px] text-slate-300 transition-colors hover:border-white/15 hover:bg-white/5 focus-visible:border-cyan-400/40 focus-visible:outline-none"
+              onMouseEnter={() => onEnter(dataIndex >= 0 ? dataIndex : null)}
+              onMouseLeave={onLeaveSchedule}
+              onFocus={() => onEnter(dataIndex >= 0 ? dataIndex : null)}
+              onBlur={onLeaveSchedule}
+            >
+              <span
+                className="h-2.5 w-2.5 shrink-0 rounded-sm ring-1 ring-white/20"
+                style={{ backgroundColor: item.color ?? colors[safeIndex % colors.length] }}
+              />
+              <span className="font-medium tracking-wide">{item.value}</span>
+            </button>
+          </li>
+        )
+      })}
     </ul>
   )
 }
@@ -128,12 +140,13 @@ const TimeSpentInPollutionBinsPieChart = ({ bins, mode, binLabels, pollutant }) 
     (props) => (
       <InteractiveLegend
         {...props}
+        data={data}
         colors={COLORS}
         onEnter={setHovered}
         onLeaveSchedule={scheduleClear}
       />
     ),
-    [setHovered, scheduleClear],
+    [data, setHovered, scheduleClear],
   )
 
   return (

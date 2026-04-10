@@ -139,6 +139,8 @@ const Map = ({
       map,
       center: [centerLon, centerLat],
       zoom: 13,
+      // SDK 5 DefaultUI2D defaults to components: ["zoom"]; empty list = no +/- widget
+      ui: { components: [] },
     })
     viewRef.current = view
 
@@ -283,7 +285,10 @@ const Map = ({
       <h3 className="mb-3 text-lg font-semibold text-slate-100">
         {mode === 'trace' ? 'Trace path, all sites & point navigator' : 'Single Location Map'}
       </h3>
-      <div ref={mapRef} className="h-130 w-full rounded-xl border border-white/10" />
+      <div
+        ref={mapRef}
+        className="airtrail-esri-map h-100 w-full rounded-xl border border-white/10"
+      />
       {showStepper ? (
         <div className="mt-4 overflow-hidden rounded-2xl border border-white/[0.07] bg-slate-950/55 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05),0_12px_40px_-12px_rgba(0,0,0,0.65)] backdrop-blur-md">
           <div className="flex flex-col sm:flex-row sm:items-stretch">

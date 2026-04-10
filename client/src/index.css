@@ -18,6 +18,11 @@
   }
 }
 
+/* ArcGIS MapView: SDK 5 may still mount zoom in some cases */
+.airtrail-esri-map .esri-zoom {
+  display: none !important;
+}
+
 @layer components {
   .glass {
     @apply border border-white/10 bg-white/5 shadow-2xl backdrop-blur-xl;
@@ -288,4 +293,8 @@
     flex-direction: column;
     align-items: flex-start;
   }
+}
+
+.esri-attribution {
+  display: none !important;
 }
