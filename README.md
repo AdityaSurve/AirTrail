@@ -1,4 +1,9 @@
 # AirTrail Analytics Platform
+## By Aditya Surve and Jai Damani
+
+AirTrail is a distributed pollution-exposure analytics platform. Users upload GPS traces (CSV/GPX), which are asynchronously processed against PostGIS pollution data to calculate time-weighted and peak exposure metrics, then visualized on an interactive Streamlit dashboard.
+
+---
 
 AirTrail is an end-to-end system for **personal pollution exposure analytics**. Users upload GPS traces (CSV with timestamps and coordinates), and the platform matches those points to nearby air-quality monitoring data, computes time-weighted and peak exposure metrics, and serves results through a REST API, a Streamlit dashboard, and a React (Vite) web client.
 
