@@ -17,6 +17,62 @@ AirTrail is an end-to-end system for **personal pollution exposure analytics**. 
 
 Shared domain logic lives in `packages/airtrail_core/` (matching, exposure, models, ingestion helpers).
 
+## System flow
+
+Three phases, one pipeline: **upload** (API + object storage + job row), **process** (queue + worker + PostGIS), **serve** (API + Redis + clients).  
+The **Mermaid** diagram below renders as a real chart on **github.com** when you view this README in the browser. In Cursor/VS Code, the built-in preview usually shows Mermaid as plain text unless you install a Mermaid preview extension.
+
+### At a glance (works everywhere)
+
+```
+  ┌─────────────────────────────────────────────────────────────────────────────┐
+  │ 1 · INGEST                                                                  │
+  └─────────────────────────────────────────────────────────────────────────────┘
+
+      ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+      │ Vite+React  │     │ Streamlit   │     │ HTTP clients│
+      └──────┬──────┘     └──────┬──────┘     └──────┬──────┘
+             │                   │                   │
+             └───────────────────┴───────────────────┘
+                                 │
+                                 ▼
+                         ┌───────────────┐
+                         │   Flask API   │
+                         └───────┬───────┘
+             ┌───────────────────┼───────────────────┐
+             ▼                   ▼                   ▼
+        ┌───────────┐      ┌─────────────┐     ┌───────────┐
+        │   MinIO   │      │ PostgreSQL  │     │ RabbitMQ  │
+        │  traces   │      │  + PostGIS  │     │   queue   │
+        └───────────┘      └─────────────┘     └─────┬─────┘
+                                                     │
+  ┌──────────────────────────────────────────────────┴──────────────────────────────┐
+  │ 2 · PROCESS                                                                     │
+  └─────────────────────────────────────────────────────────────────────────────────┘
+
+                                                     ▼
+                                              ┌─────────────┐
+                                              │   Celery    │
+                                              │   worker    │
+                                              └──────┬──────┘
+                    read traces · spatial match · write results────┐
+                         │                    │                    │
+                         ▼                    ▼                    ▼
+                   ┌───────────┐      ┌─────────────┐      ┌───────────┐
+                   │   MinIO   │      │ PostgreSQL  │      │   Redis   │
+                   │           │      │  + PostGIS  │      │   cache / │
+                   └───────────┘      └─────────────┘      │  backend  │
+                                                           └─────┬─────┘
+  ┌──────────────────────────────────────────────────────────────┴────────────────┐
+  │ 3 · SERVE                                                                     │
+  └───────────────────────────────────────────────────────────────────────────────┘
+
+       JSON · job status · metrics · map payloads
+              ┌───────────────┐
+              │   Flask API   │ ──────────────────────────►  clients
+              └───────────────┘
+```
+
 ## Tech stack
 
 | Layer | Technologies |
@@ -28,16 +84,98 @@ Shared domain logic lives in `packages/airtrail_core/` (matching, exposure, mode
 | Dashboards | Streamlit + Folium; React 19 + Vite 8 + Tailwind |
 | Migrations | Alembic |
 
-## Repository layout
+## Repository structure
 
-- `services/api/` — Flask application (`services.api.app:app`)
-- `services/worker/` — Celery worker (`services.worker.celery_app`)
-- `services/dashboard/` — Streamlit entrypoint (`services/dashboard/app.py`)
-- `client/` — Vite + React SPA
-- `packages/airtrail_core/` — Shared Python library
-- `data/` — Optional scripts and sample traces for enriching/ingesting monthly station CSVs into Postgres
-- `docker-compose.yml` — Full stack orchestration
-- `Dockerfile` — Python 3.11 image used for API, worker, and dashboard containers
+Source layout as checked into the repo. Omitted: `client/node_modules/`, `client/dist/`, `venv/`, `__pycache__/`, and local `.env` files. Create `data/monthly_csv/` when you run the monthly station CSV enrichment/ingest scripts.
+
+```
+AirTrail/
+├── alembic/
+│   ├── env.py
+│   ├── script.py.mako
+│   └── versions/
+│       ├── f8a3b2c1_initial_schema.py
+│       ├── b4c5d6e7_add_pollutant_to_gps_traces.py
+│       └── c1d2e3f4_station_external_id_obs_unique.py
+├── client/
+│   ├── public/
+│   │   ├── favicon.svg
+│   │   ├── icons.svg
+│   │   └── logo.png
+│   ├── src/
+│   │   ├── api/
+│   │   │   └── airtrail.js
+│   │   ├── components/
+│   │   │   ├── charts/
+│   │   │   │   ├── PollutionExposureOverTime.jsx
+│   │   │   │   ├── TimeSpentInPollutionBinsPieChart.jsx
+│   │   │   │   └── TopBoxes.jsx
+│   │   │   ├── ChartsSection.jsx
+│   │   │   ├── FileUploadModal.jsx
+│   │   │   ├── Map.jsx
+│   │   │   ├── Navbar.jsx
+│   │   │   └── Sidebar.jsx
+│   │   ├── constants/
+│   │   │   ├── dashboardDefaults.js
+│   │   │   └── pollutants.js
+│   │   ├── lib/
+│   │   │   └── whoBinning.js
+│   │   ├── pages/
+│   │   │   ├── Dashboard.jsx
+│   │   │   └── Home.jsx
+│   │   ├── App.jsx
+│   │   ├── index.css
+│   │   └── main.jsx
+│   ├── .env.example
+│   ├── .gitignore
+│   ├── eslint.config.js
+│   ├── index.html
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── README.md
+│   └── vite.config.js
+├── data/
+│   ├── sample_traces/
+│   │   └── demo_boulder_cu_5h.csv
+│   ├── colorado_stations.json
+│   ├── daily_update.cmd
+│   ├── daily_update.py
+│   ├── detect_missing_files.py
+│   ├── enrich_monthly_csvs_boulder_coords.py
+│   ├── ingest_monthly_csv_to_postgres.py
+│   ├── research.ipynb
+│   └── webscrapper.py
+├── packages/
+│   └── airtrail_core/
+│       ├── __init__.py
+│       ├── constants.py
+│       ├── exposure.py
+│       ├── ingestion.py
+│       ├── matching.py
+│       ├── models.py
+│       └── test_core.py
+├── services/
+│   ├── api/
+│   │   └── app.py
+│   ├── dashboard/
+│   │   └── app.py
+│   └── worker/
+│       └── celery_app.py
+├── tests/
+│   └── test_integration.py
+├── .dockerignore
+├── .env.example
+├── .gitignore
+├── alembic.ini
+├── docker-compose.yml
+├── Dockerfile
+├── README.md
+├── requirements.txt
+├── setup.bat
+└── start.sh
+```
+
+**Entrypoints**: Flask `services.api.app:app`, Celery `services.worker.celery_app`, Streamlit `services/dashboard/app.py`, React `client/src/main.jsx`.
 
 ## Prerequisites
 
